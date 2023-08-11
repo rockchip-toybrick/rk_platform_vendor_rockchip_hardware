@@ -23,9 +23,21 @@ cc_library_shared {
     shared_libs: [
         "libhidlbase",
         "libutils",
-	"liblog",
+        "liblog",
+        "librga",
+        "libui",
         "rockchip.hardware.hdmi@1.0",
     ],
+    include_dirs: [
+        "hardware/rockchip/librga",
+    ],
+    product_variables: {
+       cameraSupportVirtual: {
+           cppflags:[
+               "-DVIRTUAL_ENABLE",
+           ],
+       }
+    },
 }
 
 cc_binary {

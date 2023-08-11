@@ -10,6 +10,16 @@
 #include "HdmiAudioCallback.h"
 #include <condition_variable>
 
+#include <RockchipRga.h>
+#include <im2d_api/im2d.h>
+#include "im2d_api/im2d.hpp"
+#include "im2d_api/im2d_common.h"
+
+#include <ui/Fence.h>
+#include <ui/GraphicBufferMapper.h>
+#include <ui/GraphicBuffer.h>
+#include <ui/Rect.h>
+
 #define BASE_VIDIOC_PRIVATE 192     /* 192-255 are private */
 #define RKMODULE_GET_HDMI_MODE       \
         _IOR('V', BASE_VIDIOC_PRIVATE + 34, __u32)
@@ -28,6 +38,14 @@ std::mutex mLockStatusCb;
 std::mutex mLockFrameWarpper;
 
 hidl_string mDeviceId;
+#ifdef VIRTUAL_ENABLE
+#define YUV_PATH "/vendor/etc/camera/%dx%d.yuv"
+#define YUV_W 1920
+#define YUV_H 1080
+sp<GraphicBuffer> sYUVBuffer;
+#endif
+#define RGA_VIRTUAL_W (4096)
+#define RGA_VIRTUAL_H (4096)
 
 const int kMaxDevicePathLen = 256;
 const char* kDevicePath = "/dev/";
@@ -84,7 +102,143 @@ int findMipiHdmi()
     closedir(devdir);
     return ret;
 }
+sp<GraphicBuffer> GraphicBuffer_Init(int width, int height,int format) {
+    sp<GraphicBuffer> gb(new GraphicBuffer(width,height,format,
+                                           GRALLOC_USAGE_SW_WRITE_OFTEN | GRALLOC_USAGE_SW_READ_OFTEN));
+    if (gb->initCheck()) {
+        printf("GraphicBuffer check error : %s\n",strerror(errno));
+        return NULL;
+    } else
+        printf("GraphicBuffer check %s \n","ok");
 
+    return gb;
+}
+int rga_scale_crop_dstfd(
+		int src_width, int src_height,
+		sp<GraphicBuffer> src_buf, int src_format,buffer_handle_t dst_buf_handle,
+		int dst_width, int dst_height,
+		int zoom_val, bool mirror, bool isNeedCrop,
+		bool isDstNV21, bool is16Align, bool isYuyvFormat)
+{
+    struct timespec last_tm;
+    struct timespec curr_tm;
+    clock_gettime(CLOCK_MONOTONIC_COARSE, &last_tm);
+    int ret = 0;
+    rga_info_t src,dst;
+    int zoom_cropW,zoom_cropH;
+    int ratio = 0;
+    int zoom_top_offset=0,zoom_left_offset=0;
+    rga_buffer_handle_t src_handle;
+    rga_buffer_handle_t dst_handle;
+
+    RockchipRga& rkRga(RockchipRga::get());
+
+    im_handle_param_t param;
+    param.width = src_width;
+    param.height = src_height;
+    param.format = src_format;
+
+    memset(&src, 0, sizeof(rga_info_t));
+    int src_fd,dst_fd;
+    ret = rkRga.RkRgaGetBufferFd(src_buf->handle, &src_fd);
+    if (ret){
+        ALOGE("%s: get buffer fd fail: %s, buffer_handle_t=%p",__FUNCTION__, strerror(errno), (void*)(src_buf->handle));
+        return ret;
+    }
+
+    src.fd = src_fd;
+    src_handle = importbuffer_fd(src_fd, &param);
+    src.mmuFlag = ((2 & 0x3) << 4) | 1 | (1 << 8) | (1 << 10);
+    memset(&dst, 0, sizeof(rga_info_t));
+
+    ret = rkRga.RkRgaGetBufferFd(dst_buf_handle, &dst_fd);
+    if (ret){
+        ALOGE("%s: get buffer fd fail: %s, buffer_handle_t=%p",__FUNCTION__, strerror(errno), (void*)(src_buf->handle));
+        return ret;
+    }
+
+    dst.fd = dst_fd;
+    param.width = dst_width;
+    param.height = dst_height;
+    if (isDstNV21){
+        param.format = HAL_PIXEL_FORMAT_YCrCb_420_SP;
+    }else{
+        param.format = HAL_PIXEL_FORMAT_YCrCb_NV12;
+    }
+
+    dst_handle = importbuffer_fd(dst_fd, &param);
+    //ALOGD("@%s, dst fd:%d,width:%d,height:%d,isDstNV21:%d",__FUNCTION__,dst.fd,param.width,param.height,isDstNV21);
+    dst.mmuFlag = ((2 & 0x3) << 4) | 1 | (1 << 8) | (1 << 10);
+
+    if((dst_width > RGA_VIRTUAL_W) || (dst_height > RGA_VIRTUAL_H)){
+        ALOGE("(dst_width > RGA_VIRTUAL_W) || (dst_height > RGA_VIRTUAL_H), switch to arm ");
+        ret = -1;
+        goto END;
+    }
+
+    //need crop ? when cts FOV,don't crop
+    if(isNeedCrop && (src_width*100/src_height) != (dst_width*100/dst_height)) {
+        ratio = ((src_width*100/dst_width) >= (src_height*100/dst_height))?
+                (src_height*100/dst_height):
+                (src_width*100/dst_width);
+        zoom_cropW = (ratio*dst_width/100) & (~0x01);
+        zoom_cropH = (ratio*dst_height/100) & (~0x01);
+        zoom_left_offset=((src_width-zoom_cropW)>>1) & (~0x01);
+        zoom_top_offset=((src_height-zoom_cropH)>>1) & (~0x01);
+    }else{
+        zoom_cropW = src_width;
+        zoom_cropH = src_height;
+        zoom_left_offset=0;
+        zoom_top_offset=0;
+    }
+
+    if(zoom_val > 100){
+        zoom_cropW = zoom_cropW*100/zoom_val & (~0x01);
+        zoom_cropH = zoom_cropH*100/zoom_val & (~0x01);
+        zoom_left_offset = ((src_width-zoom_cropW)>>1) & (~0x01);
+        zoom_top_offset= ((src_height-zoom_cropH)>>1) & (~0x01);
+    }
+
+    //usb camera height align to 16,the extra eight rows need to be croped.
+    if(!is16Align){
+        zoom_top_offset = zoom_top_offset & (~0x07);
+    }
+
+    rga_set_rect(&src.rect, zoom_left_offset, zoom_top_offset,
+                zoom_cropW, zoom_cropH, src_width,
+                src_height, src_format);
+    if (isDstNV21)
+        rga_set_rect(&dst.rect, 0, 0, dst_width, dst_height,
+                    dst_width, dst_height,
+                    HAL_PIXEL_FORMAT_YCrCb_420_SP);
+    else
+        rga_set_rect(&dst.rect, 0,0,dst_width,dst_height,
+                    dst_width,dst_height,
+                    HAL_PIXEL_FORMAT_YCrCb_NV12);
+
+    if (mirror)
+        src.rotation = DRM_RGA_TRANSFORM_FLIP_V;
+    //TODO:sina,cosa,scale_mode,render_mode
+
+    src.handle = src_handle;
+    src.fd = 0;
+    dst.handle = dst_handle;
+    dst.fd = 0;
+    dst.core = 0x03;
+    ret = rkRga.RkRgaBlit(&src, &dst, NULL);
+    if (ret) {
+        ALOGE("%s:rga blit failed %s", __FUNCTION__, imStrError((IM_STATUS)ret));
+        goto END;
+    }
+
+    END:
+    releasebuffer_handle(src_handle);
+    releasebuffer_handle(dst_handle);
+    clock_gettime(CLOCK_MONOTONIC_COARSE, &curr_tm);
+    //LOGD("%s use %ldms", __FUNCTION__, get_time_diff_ms(&last_tm,&curr_tm));
+
+    return ret;
+}
 
 Return<void> Hdmi::foundHdmiDevice(const hidl_string& deviceId, const ::android::sp<::rockchip::hardware::hdmi::V1_0::IHdmiRxStatusCallback>& cb) {
 
@@ -128,7 +282,7 @@ Return<void> Hdmi::onAudioChange(const ::rockchip::hardware::hdmi::V1_0::HdmiAud
     return Void();
 }
 Return<void> Hdmi::getHdmiDeviceId(getHdmiDeviceId_cb _hidl_cb) {
-    ALOGD("@%s,mDeviceId：%s",__FUNCTION__,mDeviceId.c_str());
+    ALOGD("@%s,mDeviceId:%s",__FUNCTION__,mDeviceId.c_str());
     _hidl_cb(mDeviceId);
     return Void();
 }
@@ -269,6 +423,34 @@ V4L2EventCallBack Hdmi::eventCallback(void* sender,int event_type,struct v4l2_ev
 
 Hdmi::Hdmi(){
     ALOGD("@%s.",__FUNCTION__);
+#ifdef VIRTUAL_ENABLE
+    if(sYUVBuffer == nullptr){
+        int width,height;
+        width = YUV_W;
+        height = YUV_H;
+        sYUVBuffer = GraphicBuffer_Init(width, height, HAL_PIXEL_FORMAT_YCrCb_420_SP);
+        char* outbuf = NULL;
+        if (sYUVBuffer != NULL) {
+            int ret = sYUVBuffer->lock(GRALLOC_USAGE_SW_WRITE_OFTEN | GRALLOC_USAGE_SW_READ_OFTEN, (void**)&outbuf);
+            {
+                FILE* fp =NULL;
+                char filename[128];
+                filename[0] = 0x00;
+                sprintf(filename, YUV_PATH,
+                    width, height);
+                fp = fopen(filename, "r");
+                if (fp != NULL) {
+                    int size = fread((char*)outbuf,1,width*height*1.5,fp);
+                    fclose(fp);
+                    ALOGD("read success yuv data to %s size:%d",filename, size);
+                } else {
+                    ALOGE("Create %s failed(%d, %s)",filename,fp, strerror(errno));
+                }
+            }
+            ret = sYUVBuffer->unlock();
+        }
+    }
+#endif
     mCb = new HdmiCallback();
     mV4l2Event = new V4L2DeviceEvent();
     mV4l2Event->RegisterEventvCallBack((V4L2EventCallBack)Hdmi::eventCallback);
@@ -310,6 +492,38 @@ Return<void> Hdmi::decoratorFrame(const ::rockchip::hardware::hdmi::V1_0::FrameI
         _hidl_cb(_frameInfo);
         lk.unlock();
         return Void();
+    }else{
+#ifdef VIRTUAL_ENABLE
+        android::GraphicBufferMapper &mapper = android::GraphicBufferMapper::get();
+        buffer_handle_t handle = nullptr;
+        android::Rect bounds(android::ui::Size(frameInfo.width, frameInfo.height));
+        android::status_t err = mapper.importBuffer(
+                           frameInfo.buffer.getNativeHandle(), frameInfo.width, frameInfo.height, 1u,
+                           HAL_PIXEL_FORMAT_YCrCb_NV12,
+                            static_cast<uint64_t>(frameInfo.usage), frameInfo.stride, &handle);
+        if(err != android::NO_ERROR){
+            ALOGE("@%s(%d) importBuffer error",__FUNCTION__,__LINE__);
+        }
+        int deviceId = atoi(frameInfo.deviceId.c_str());
+        ALOGV("@%s(%d,%d) usage:%" PRIx64 " frameId:%d deviceId:%d",__FUNCTION__,(int)frameInfo.width,(int)frameInfo.height,static_cast<uint64_t>(frameInfo.usage)
+        , (int)frameInfo.frameId,deviceId);
+
+
+        if(sYUVBuffer != nullptr && handle !=nullptr){
+            bool mirror = false;
+            bool isNeedCrop = true;
+            bool isDstNV21 = false;
+            bool is16Align = true;
+            bool isYuyvFormat = true;
+
+            rga_scale_crop_dstfd(YUV_W,YUV_H,sYUVBuffer,HAL_PIXEL_FORMAT_YCrCb_NV12,
+                handle,frameInfo.width,frameInfo.height,100,mirror,isNeedCrop,isDstNV21,is16Align,isYuyvFormat);
+            mapper.freeBuffer(handle);
+        }else{
+            ALOGE("sYUVBuffer:%x",(void*)sYUVBuffer.get());
+            ALOGE("handle:%x",(void*)handle);
+        }
+#endif
     }
     _hidl_cb(frameInfo);
     lk.unlock();
