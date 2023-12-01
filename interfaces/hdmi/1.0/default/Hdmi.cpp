@@ -9,6 +9,8 @@
 #include "HdmiCallback.h"
 #include "HdmiAudioCallback.h"
 #include <condition_variable>
+#include <cutils/properties.h>
+
 
 #include <RockchipRga.h>
 #include <im2d_api/im2d.h>
@@ -57,6 +59,12 @@ char kV4l2DevicePath[kMaxDevicePathLen];
 int mMipiHdmi = 0;
 
 sp<V4L2DeviceEvent> mV4l2Event;
+char* getMipiID(){
+    char value[PROPERTY_VALUE_MAX]={0};
+    property_get("persist.vendor.camera.mipi", value, "");
+    ALOGD("%s %s",__FUNCTION__,value);
+    return value;
+}
 int findMipiHdmi()
 {
     DIR* devdir = opendir(kDevicePath);
@@ -268,7 +276,9 @@ Return<void> Hdmi::removeAudioListener(const ::android::sp<::rockchip::hardware:
 Return<void> Hdmi::onAudioChange(const ::rockchip::hardware::hdmi::V1_0::HdmiAudioStatus& status) {
     ALOGD("@%s",__FUNCTION__);
     std::unique_lock<std::mutex> lk(mLockAudio);
-    if (mAudioCb.get()!=nullptr && strstr(status.deviceId.c_str(),mDeviceId.c_str()))
+    char* mipiid = getMipiID();
+    if (mAudioCb.get()!=nullptr && ( strstr(status.deviceId.c_str(),mDeviceId.c_str())
+        || (strlen(mipiid) > 0 && (status.deviceId.c_str(),mipiid))))
     {
         ALOGD("@%s,cameraId:%s status:%d",__FUNCTION__,status.deviceId.c_str(),status.status);
         if (status.status)
@@ -396,7 +406,9 @@ V4L2EventCallBack Hdmi::eventCallback(void* sender,int event_type,struct v4l2_ev
         {
             if (!ctrl->value)
             {
-                mCb->onDisconnect("0");
+                mCb->onDisconnect(getMipiID());
+            }else{
+                mCb->onConnect(getMipiID());
             }
         }
         ALOGD("V4L2_EVENT_CTRL event %d\n", ctrl->value);
@@ -411,8 +423,8 @@ V4L2EventCallBack Hdmi::eventCallback(void* sender,int event_type,struct v4l2_ev
                 ALOGD("getFormatWeight:%d,getFormatHeight:%d",format->getFormatWeight(),format->getFormatHeight());
                 if (mCb != nullptr)
                 {
-                    mCb->onFormatChange("0",format->getFormatWeight(),format->getFormatHeight());
-                    mCb->onConnect("0");
+                    mCb->onFormatChange(getMipiID(),format->getFormatWeight(),format->getFormatHeight());
+                    mCb->onConnect(getMipiID());
                 }
             }
         }
