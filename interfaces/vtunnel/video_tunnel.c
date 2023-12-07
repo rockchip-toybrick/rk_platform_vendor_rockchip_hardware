@@ -184,7 +184,7 @@ int rk_vt_queue_buffer(
     buf_data.vt_id = tunnel_id;
     buf_data.base.num_fds = handle->numFds;
     buf_data.base.num_ints = handle->numInts;
-    buf_data.base.fence_fd = buffer->fence_fd;
+    buf_data.base.fence_fd = buffer->rdy_render_fence_fd;
     buf_data.base.priv_data = (int64_t)buffer;
     buf_data.base.buffer_id = buffer->buffer_id;
     buf_data.base.crop.left = buffer->crop.left;
@@ -332,7 +332,7 @@ int rk_vt_acquire_buffer(int fd, int tunnel_id, int timeout_ms,
            &buf_data.base.ints[0],
            sizeof(int) * tmpVtBuf->handle->numInts);
     tmpVtBuf->buffer_id = buf_data.base.buffer_id;
-    tmpVtBuf->fence_fd = buf_data.base.fence_fd;
+    tmpVtBuf->rdy_render_fence_fd = buf_data.base.fence_fd;
     tmpVtBuf->crop.left = buf_data.base.crop.left;
     tmpVtBuf->crop.top = buf_data.base.crop.top;
     tmpVtBuf->crop.right = buf_data.base.crop.right;

@@ -111,7 +111,8 @@ typedef struct vt_buffer {
     vt_rect_t dis_rect;
     int64_t private_data;
     vt_bufmode_t buffer_mode;
-    int reserve[5];
+    int rdy_render_fence_fd;
+    int reserve[4];
 } vt_buffer_t;
 
 int rk_vt_open();
