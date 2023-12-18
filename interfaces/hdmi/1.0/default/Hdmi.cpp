@@ -33,6 +33,12 @@ sp<::rockchip::hardware::hdmi::V1_0::IHdmiCallback> mCb = nullptr;
 sp<::rockchip::hardware::hdmi::V1_0::IHdmiAudioCallback> mAudioCb = nullptr;
 sp<::rockchip::hardware::hdmi::V1_0::IHdmiRxStatusCallback> mStatusCb = nullptr;
 sp<::rockchip::hardware::hdmi::V1_0::IFrameWarpper> mFrameWarpper = nullptr;
+enum CBType{
+    HDMI= 100,
+    AUDIO,
+    STATUS,
+    FRAME
+};
 
 std::mutex mLock;
 std::mutex mLockAudio;
@@ -251,21 +257,39 @@ int rga_scale_crop_dstfd(
 Return<void> Hdmi::foundHdmiDevice(const hidl_string& deviceId, const ::android::sp<::rockchip::hardware::hdmi::V1_0::IHdmiRxStatusCallback>& cb) {
 
     ALOGD("@%s,deviceId:%s",__FUNCTION__,deviceId.c_str());
+    if (cb == nullptr ||cb.get() == nullptr)
+    {
+       return Void();
+    }
     std::unique_lock<std::mutex> lk(mLockStatusCb);
     mDeviceId = deviceId.c_str();
+    if (mStatusCb != nullptr)
+    {
+        mStatusCb->unlinkToDeath(this);
+    }
     mStatusCb = cb;
+    mStatusCb->linkToDeath(this, STATUS);
     lk.unlock();
     return Void();
 }
 
 Return<void> Hdmi::addAudioListener(const ::android::sp<::rockchip::hardware::hdmi::V1_0::IHdmiAudioCallback>& cb) {
     ALOGD("@%s",__FUNCTION__);
+    if (cb == nullptr ||cb.get() == nullptr)
+    {
+       return Void();
+    }
     std::unique_lock<std::mutex> lk(mLockAudio);
+    if (mAudioCb != nullptr)
+    {
+        mAudioCb->unlinkToDeath(this);
+    }
     mAudioCb = cb;
+    mAudioCb->linkToDeath(this, AUDIO);
     lk.unlock();
     return Void();
 }
-Return<void> Hdmi::removeAudioListener(const ::android::sp<::rockchip::hardware::hdmi::V1_0::IHdmiAudioCallback>& cb) 
+Return<void> Hdmi::removeAudioListener(const ::android::sp<::rockchip::hardware::hdmi::V1_0::IHdmiAudioCallback>& cb)
 {
     ALOGD("@%s",__FUNCTION__);
     std::unique_lock<std::mutex> lk(mLockAudio);
@@ -382,8 +406,17 @@ Return<void> Hdmi::onStatusChange(uint32_t status) {
 
 Return<void> Hdmi::registerListener(const sp<::rockchip::hardware::hdmi::V1_0::IHdmiCallback>& cb) {
     ALOGD("@%s",__FUNCTION__);
+    if (cb == nullptr ||cb.get() == nullptr)
+    {
+       return Void();
+    }
     std::unique_lock<std::mutex> lk(mLock);
+    if (mCb != nullptr)
+    {
+        mCb->unlinkToDeath(this);
+    }
     mCb = cb;
+    cb->linkToDeath(this, HDMI);
     lk.unlock();
     return Void();
 }
@@ -482,8 +515,17 @@ V1_0::IHdmi* HIDL_FETCH_IHdmi(const char* /* name */) {
 
 Return<void> Hdmi::setFrameDecorator(const sp<::rockchip::hardware::hdmi::V1_0::IFrameWarpper>& frameWarpper) {
     ALOGD("@%s",__FUNCTION__);
+    if (frameWarpper == nullptr ||frameWarpper.get() == nullptr)
+    {
+       return Void();
+    }
     std::unique_lock<std::mutex> lk(mLockFrameWarpper);
+    if (mFrameWarpper != nullptr)
+    {
+        mFrameWarpper->unlinkToDeath(this);
+    }
     mFrameWarpper = frameWarpper;
+    mFrameWarpper->linkToDeath(this, STATUS);
     lk.unlock();
     return Void();
 }
@@ -540,6 +582,40 @@ Return<void> Hdmi::decoratorFrame(const ::rockchip::hardware::hdmi::V1_0::FrameI
     _hidl_cb(frameInfo);
     lk.unlock();
     return Void();
+}
+void Hdmi::serviceDied(uint64_t cookie,
+                     const android::wp<::android::hidl::base::V1_0::IBase>&  who){
+    ALOGD("%s cookie:%d",__FUNCTION__,cookie);
+    switch (cookie)
+    {
+        case HDMI:
+            {
+                std::lock_guard<std::mutex> lk(mLock);
+                mCb= nullptr;
+            }
+            break;
+        case AUDIO:
+            {
+                std::lock_guard<std::mutex> lk(mLock);
+                mAudioCb= nullptr;
+            }
+            break;
+        case STATUS:
+            {
+                std::lock_guard<std::mutex> lk(mLock);
+                mStatusCb= nullptr;
+            }
+            break;
+        case FRAME:
+            {
+                std::lock_guard<std::mutex> flk(mLockFrameWarpper);
+                mFrameWarpper= nullptr;
+            }
+            break;
+        default:
+                ALOGE("%s invalid cookie:%d",__FUNCTION__,cookie);
+            break;
+    }
 }
 
 }  // namespace rockchip::hardware::hdmi::implementation

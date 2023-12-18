@@ -9,7 +9,7 @@
 #include "DeviceV4L2Event.h"
 
 namespace rockchip::hardware::hdmi::implementation {
-
+using ::android::hardware::hidl_death_recipient;
 using ::android::hardware::hidl_array;
 using ::android::hardware::hidl_memory;
 using ::android::hardware::hidl_string;
@@ -18,7 +18,7 @@ using ::android::hardware::Return;
 using ::android::hardware::Void;
 using ::android::sp;
 
-struct Hdmi : public V1_0::IHdmi {
+struct Hdmi : public V1_0::IHdmi , public hidl_death_recipient{
     public:
      Hdmi();
      ~Hdmi();
@@ -37,6 +37,10 @@ struct Hdmi : public V1_0::IHdmi {
     Return<void> decoratorFrame(const ::rockchip::hardware::hdmi::V1_0::FrameInfo& frameInfo, decoratorFrame_cb _hidl_cb) override;
 
     static V4L2EventCallBack eventCallback(void* sender,int event_type,struct v4l2_event *event);
+
+     void serviceDied(uint64_t /*cookie*/,
+                     const android::wp<::android::hidl::base::V1_0::IBase>& /*who*/) override;
+
 };
 
  extern "C" V1_0::IHdmi* HIDL_FETCH_IHdmi(const char* name);
