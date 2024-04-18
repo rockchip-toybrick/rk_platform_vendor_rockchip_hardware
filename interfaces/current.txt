@@ -2,7 +2,7 @@ fc83f14d9b3c8f00df324de2a58f447855fa1ccec78d6c13e956ee7a9451d584 rockchip.hardwa
 616d164a163ce530aa9dbd8854168a7a3e48c2311deddd2616356e312041d7be rockchip.hardware.outputmanager@1.0::IRkOutputManager
 
 # hash for rockit hw
-fb75b0c9ae635e5bb9b58e90fbf23e5bc7f31ddd1a8244e768013cea511b7691 rockchip.hardware.rockit.hw@1.0::types
+bd3f8354d9806f06f5bab5d3321c4883dde5ec4dc265519bc9e9e781f13e5082 rockchip.hardware.rockit.hw@1.0::types
 d7ee7fadb16fdf521d533482de1b0d3ae25e4eec5cf765a35ddda1721a5134b3 rockchip.hardware.rockit.hw@1.0::IRockitHwInterface
 59ce21677e19ce15eb87e2a6f44a49bfbce8d123b050622c40407794a6ccabe1 rockchip.hardware.rockit.hw@1.0::IRockitHwService
 
