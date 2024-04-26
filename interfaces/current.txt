@@ -1,5 +1,5 @@
 fc83f14d9b3c8f00df324de2a58f447855fa1ccec78d6c13e956ee7a9451d584 rockchip.hardware.outputmanager@1.0::types
-616d164a163ce530aa9dbd8854168a7a3e48c2311deddd2616356e312041d7be rockchip.hardware.outputmanager@1.0::IRkOutputManager
+120d991f1ba85b994a7873021dccb5c88db76cf4d877b17d1cc82ac0c211e89a rockchip.hardware.outputmanager@1.0::IRkOutputManager
 
 # hash for rockit hw
 bd3f8354d9806f06f5bab5d3321c4883dde5ec4dc265519bc9e9e781f13e5082 rockchip.hardware.rockit.hw@1.0::types
