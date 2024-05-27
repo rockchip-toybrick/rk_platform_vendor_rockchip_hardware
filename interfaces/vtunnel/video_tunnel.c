@@ -191,6 +191,11 @@ int rk_vt_queue_buffer(
     buf_data.base.crop.top = buffer->crop.top;
     buf_data.base.crop.right = buffer->crop.right;
     buf_data.base.crop.bottom = buffer->crop.bottom;
+    if (buffer->hdcp_status) {
+        buf_data.base.reserved |= 1;
+    } else {
+        buf_data.base.reserved &= 0xFFFFFFFE;
+    }
     // TODO expected present time may need to be send by user
     buf_data.base.expected_present_time = get_relative_time_us();
     // copy handle fds
@@ -200,11 +205,11 @@ int rk_vt_queue_buffer(
     memcpy(&buf_data.base.ints[0], &handle->data[handle->numFds],
            sizeof(int) * handle->numInts);
 
-    ALOGV("VTQB [%d] crop(%d %d %d %d) numFd(%d) numInts(%d) fence(%d) "
+    ALOGV("VTQB [%d] crop(%d %d %d %d) numFd(%d) numInts(%d) fence(%d) reserved(%d) "
           "priv_data(%p) fd-0(%d) buffer-id(%lld) pts(%lld)",
             tunnel_id, buffer->crop.left, buffer->crop.top, buffer->crop.right,
             buffer->crop.bottom, buf_data.base.num_fds, buf_data.base.num_ints,
-            buf_data.base.fence_fd, (void *)buf_data.base.priv_data,
+            buf_data.base.fence_fd, buf_data.base.reserved,(void *)buf_data.base.priv_data,
             buf_data.base.fds[0], (long long)buf_data.base.buffer_id,
             (long long)buf_data.base.expected_present_time);
 
@@ -337,6 +342,7 @@ int rk_vt_acquire_buffer(int fd, int tunnel_id, int timeout_ms,
     tmpVtBuf->crop.top = buf_data.base.crop.top;
     tmpVtBuf->crop.right = buf_data.base.crop.right;
     tmpVtBuf->crop.bottom = buf_data.base.crop.bottom;
+    tmpVtBuf->hdcp_status = buf_data.base.reserved & 1;
 
     *buffer = tmpVtBuf;
     *expected_present_time = buf_data.base.expected_present_time;
