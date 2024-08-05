@@ -22,6 +22,10 @@
 #include <ui/GraphicBuffer.h>
 #include <ui/Rect.h>
 
+#include <hardware/hardware_rockchip.h>
+#include <android/hardware/graphics/mapper/4.0/IMapper.h>
+using android::hardware::graphics::mapper::V4_0::IMapper;
+
 #define BASE_VIDIOC_PRIVATE 192     /* 192-255 are private */
 #define RKMODULE_GET_HDMI_MODE       \
         _IOR('V', BASE_VIDIOC_PRIVATE + 34, __u32)
@@ -47,6 +51,7 @@ std::mutex mLockFrameWarpper;
 
 hidl_string mDeviceId;
 #ifdef VIRTUAL_ENABLE
+
 #define YUV_PATH "/vendor/etc/camera/%dx%d.yuv"
 #define YUV_W 1920
 #define YUV_H 1080
@@ -127,6 +132,76 @@ sp<GraphicBuffer> GraphicBuffer_Init(int width, int height,int format) {
 
     return gb;
 }
+static IMapper &get_mapperservice()
+{
+    static android::sp<IMapper> cached_service = IMapper::getService();
+    return *cached_service;
+}
+template <typename T>
+
+static int get_metadata(IMapper &mapper, buffer_handle_t handle,  android::hardware::graphics::mapper::V4_0::IMapper::MetadataType type,
+                        android::status_t (*decode)(const  hidl_vec<uint8_t> &, T *), T *value)
+{
+	void *handle_arg = const_cast<native_handle_t *>(handle);
+	assert(handle_arg);
+	assert(value);
+	assert(decode);
+
+	int err = 0;
+	mapper.get(handle_arg, type, [&err, value, decode](android::hardware::graphics::mapper::V4_0::Error error, const  hidl_vec<uint8_t> &metadata)
+	            {
+		            if (error != android::hardware::graphics::mapper::V4_0::Error::NONE)
+		            {
+			            err = android::BAD_VALUE;
+			            return;
+		            }
+		            err = decode(metadata, value);
+		        });
+	return err;
+}
+android::status_t static decodeArmPlaneFds(const  hidl_vec<uint8_t>& input, std::vector<int64_t>* fds)
+{
+    assert (fds != nullptr);
+    int64_t size = 0;
+
+    memcpy(&size, input.data(), sizeof(int64_t));
+    if (size < 0)
+    {
+        return android::BAD_VALUE;
+    }
+
+    fds->resize(size);
+
+    const uint8_t *tmp = input.data() + sizeof(int64_t);
+    memcpy(fds->data(), tmp, sizeof(int64_t) * size);
+
+    return android::NO_ERROR;
+}
+#define GRALLOC_ARM_METADATA_TYPE_NAME "arm.graphics.ArmMetadataType"
+const static IMapper::MetadataType ArmMetadataType_PLANE_FDS
+{
+	GRALLOC_ARM_METADATA_TYPE_NAME,
+	// static_cast<int64_t>(aidl::arm::graphics::ArmMetadataType::PLANE_FDS)
+    1   // 就是上面的 'PLANE_FDS'
+};
+int GetHandleFd(buffer_handle_t buffer) {
+    int fd = -1;
+
+    auto &mapper = get_mapperservice();
+    std::vector<int64_t> fds;
+
+    int err = get_metadata(mapper, buffer, ArmMetadataType_PLANE_FDS, decodeArmPlaneFds, &fds);
+    if (err != android::OK)
+    {
+        ALOGE("Failed to get plane_fds. err : %d", err);
+        return err;
+    }
+    assert (fds.size() > 0);
+
+    fd = (int)(fds[0]);
+
+    return fd;
+}
 int rga_scale_crop_dstfd(
 		int src_width, int src_height,
 		sp<GraphicBuffer> src_buf, int src_format,buffer_handle_t dst_buf_handle,
@@ -154,8 +229,8 @@ int rga_scale_crop_dstfd(
 
     memset(&src, 0, sizeof(rga_info_t));
     int src_fd,dst_fd;
-    ret = rkRga.RkRgaGetBufferFd(src_buf->handle, &src_fd);
-    if (ret){
+    src_fd = GetHandleFd(src_buf->handle);
+    if (src_fd <= 0){
         ALOGE("%s: get buffer fd fail: %s, buffer_handle_t=%p",__FUNCTION__, strerror(errno), (void*)(src_buf->handle));
         return ret;
     }
@@ -165,8 +240,8 @@ int rga_scale_crop_dstfd(
     src.mmuFlag = ((2 & 0x3) << 4) | 1 | (1 << 8) | (1 << 10);
     memset(&dst, 0, sizeof(rga_info_t));
 
-    ret = rkRga.RkRgaGetBufferFd(dst_buf_handle, &dst_fd);
-    if (ret){
+    dst_fd = GetHandleFd(dst_buf_handle);
+    if (dst_fd <=0){
         ALOGE("%s: get buffer fd fail: %s, buffer_handle_t=%p",__FUNCTION__, strerror(errno), (void*)(src_buf->handle));
         return ret;
     }
@@ -304,7 +379,7 @@ Return<void> Hdmi::onAudioChange(const ::rockchip::hardware::hdmi::V1_0::HdmiAud
     if (mAudioCb.get()!=nullptr && ( strstr(status.deviceId.c_str(),mDeviceId.c_str())
         || (strlen(mipiid) > 0 && (status.deviceId.c_str(),mipiid))))
     {
-        ALOGD("@%s,cameraId:%s status:%d",__FUNCTION__,status.deviceId.c_str(),status.status);
+        ALOGD("@%s,cameraId:%s status:%lu",__FUNCTION__,status.deviceId.c_str(),status.status);
         if (status.status)
         {
             mAudioCb->onConnect(status.deviceId);
@@ -467,9 +542,9 @@ V4L2EventCallBack Hdmi::eventCallback(void* sender,int event_type,struct v4l2_ev
 }
 
 Hdmi::Hdmi(){
-    ALOGD("@%s.",__FUNCTION__);
 #ifdef VIRTUAL_ENABLE
     if(sYUVBuffer == nullptr){
+
         int width,height;
         width = YUV_W;
         height = YUV_H;
