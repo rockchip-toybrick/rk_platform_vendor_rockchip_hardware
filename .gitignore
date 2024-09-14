@@ -11,9 +11,10 @@
 #
 # Rockchip directory (for rockchip modules)
 #
-/interfaces/outputmanager
-/interfaces/neuralnetworks
-/interfaces/rksoundsetting
-/interfaces/rockit
-/interfaces/codec2
-/interfaces/tv
+interfaces/*
+
+!interfaces/Android.bp
+!interfaces/current.txt
+!interfaces/update-makefiles.sh
+!interfaces/hdmi
+!interfaces/vtunnel
